@@ -1,49 +1,69 @@
-// MidiConsole_1.cpp : This file contains the 'main' function. Program execution begins and ends there.
-// http://www.somascape.org/midi/tech/mfile.html
+
+// Good info on the midi file standard http://www.somascape.org/midi/tech/mfile.html
+// This project is just a academic task to freshen up C++ and the brain after watching
+// javidx9's video on youtube https://www.youtube.com/watch?v=040BKtnDdg0
+// I saw that I had to refresh my bit manipulation skills a bit and found that trying to recreate
+// the project (and using javdx9's video/solution as a crutch on the way) would be a good exercise.
+// 
+// After the parsing - I wish to look into how to control real time marshalling of the note-data.
+// as a very simple playback sequencer. Probably not to a midi device but a time logged file or something.
+
 
 #include <iostream>
 #include <fstream>
 #include <vector>
-#include <list>
+#include <map>
 #include <iomanip>
 #include <ios>
 #include <memory>
+#include <iterator>
+#include <algorithm>
 
-// we are currently only interested in note on-/off messages
-
-struct MidiEvent {
-    uint32_t    sinceLastEvent;
-    uint16_t    channel;
-    uint16_t    note;
-    bool        noteOn;
-};
-
-// Track, output MidiEvents
-
-
-struct MidiTrack {
-    std::string name;
-    uint32_t channel; // a track with format 1 has may spread to all channels
-    std::vector<MidiEvent> events;
-};
-
-auto print_hex = [](uint32_t val) {
+void print_hex(uint32_t val) {
     auto flgs = std::cout.flags();
     std::cout << "0x" << std::hex << std::setw(8) << std::setfill('0') << val << '\n';
     std::cout.flags(flgs);
 };
 
+// we are currently only interested in note on-/off messages
+
+struct MidiEvent {
+    enum class EventType {
+        NoteOn,
+        NoteOff,
+        Other // As with javidx9 - I will only care about note on and off.
+    } event;
+    uint32_t    delta_time  = 0;    
+    uint8_t     note        = 0;
+    uint8_t     velocity    = 0;
+    uint8_t     channel     = 0; // will probably never use before moving on to another project
+};
+struct MidiNote {
+    uint8_t     note        = 0;
+    uint8_t     velocity    = 0;
+    uint32_t    start_time  = 0; // absolute start time from beginning or delta time?
+    uint32_t    duration    = 0;
+};
+struct MidiTrack {
+    std::string             name;
+    std::string             instrument;
+    std::vector<MidiEvent>  events;
+    std::vector<MidiNote>   notes;
+    uint8_t                 port; // may change during track? Hmm. think so    
+};
+
+
 class MidiFile {
 
     enum EventType : uint8_t {
-        VoiceNoteOff = 0x80,
-        VoiceNoteOn = 0x90, 
-        VoiceAfterTouch = 0xA0,
-        VoiceControlChange = 0xB0,
-        VoiceProgramChange = 0xC0,
-        VoiceChannelPressure = 0xD0,
-        VoicePitchBend = 0xE0,
-        SystemExclusive = 0xF0
+        NoteOff = 0x80,
+        NoteOn = 0x90, 
+        AfterTouch = 0xA0,
+        ControlChange = 0xB0,
+        ProgramChange = 0xC0,
+        ChannelPressure = 0xD0,
+        PitchBend = 0xE0,
+        SysExAndMeta = 0xF0 // hmmm sysex1 and 2 + META        
     };
 
 public:
@@ -64,25 +84,36 @@ public:
                 s += file.get();
             return s;
         };
-        auto read_bytes = [&file]() { // should probably throw if prematue eof()
+        auto read_multi_bytes = [&file]() { // should probably throw if prematue eof()
             uint32_t result;
             uint8_t bt;
 
             result = file.get();
 
             // check if bit 8 is set
+            // then the up to 4 bytes may be needed to resolve the value.
             if (result & 0x80) { 
 
-                // clear bit 8, and kepp reading bytes until bit 8 is zero
-                result &= 0x80; 
+                // clear bit 8, and keep reading bytes until bit 8 is zero
+                result &= 0x7F; 
                 do {                    
                     bt = file.get();
                     result = result << 7; // make place for new 7 bits
-                    result |= (bt & 0x7F); // put last 7 bits. Results become 14, 21 or 28 bits (hopefully not more)
+                    result |= (bt & 0x7F); // put last 7 bits. Results become 14, 21 or 28 bits
                 } while (bt & 0x80);
             }
             return result;
         };
+        //auto skip_read = [&file](uint32_t bytes_left_to_skip) {
+        //    // Realizing that I can better use file.seekg to move number of bytes into the stream
+        //    // but anyways.... 
+        //    static char buffer[256];            
+        //    while (bytes_left_to_skip) {
+        //        uint32_t chunk_size = bytes_left_to_skip > 256 ? 256 : bytes_left_to_skip;
+        //        file.read(buffer, chunk_size);
+        //        bytes_left_to_skip -= chunk_size;
+        //    }
+        //}
 
         // read in the midi file
         uint32_t tmp32;
@@ -113,6 +144,7 @@ public:
         SMPTE = tmp16 & 0x8000; // highest bit set => SMPTE
         if (SMPTE) {
             // frames per second
+            // TODO: need another midi file to test this.
             fps = ((~((tmp16 & 0xEF00) >> 8)) + 1) & 0x00FF; // Two's complement of bit 8-15... gotta be abetter way
             std::cout << "fps: " << fps;
 
@@ -125,7 +157,8 @@ public:
         }
 
 
-        // read midi tracks
+        // Go through each midi track. Each track has all its content in
+        // contigous areas. 
         for (uint16_t trk = 0; trk < num_tracks; ++trk) {
 
             // read track header then consume the events            
@@ -134,63 +167,238 @@ public:
             // length in bytes of track chunk
             file.read((char*)&tmp32, sizeof(uint32_t));
             uint32_t numBytes = swap_32(tmp32);
-            std::cout << "New track -------\n";
+            std::cout << "TRACK --- " << trk << " --- (" << numBytes << " bytes long)\n";
+
+            tracks.push_back(MidiTrack());
 
             bool end_of_track = false;
-            uint8_t prev_status = 0;
+            uint8_t prev_status = 0; // needed for "running state" where several midi events share the same status
+            
 
             while (!file.eof() && !end_of_track) 
             {
                 // read deltatimes 2 bytes, and status 8 bytes 
                 uint32_t    delta_time = 0;
                 uint8_t     status = 0;
-                uint8_t note = 0;
-                uint8_t velocity = 0;
-                uint8_t channel = 0;
+                uint8_t     note = 0;
+                uint8_t     velocity = 0;
+                uint8_t     channel = 0;
 
-                delta_time = read_bytes();
+                uint32_t    length = 0;
+                std::string tmp_string;
+
+                delta_time = read_multi_bytes();
                 status = file.get();
 
+                // check if running state and restore previous status if so
+                if (status < 0x80) { // this is not a status byte - but midi event data
+                    // move back a position in the stream or else the next reads will be off
+                    file.seekg(-1, std::ios::cur);
+                    status = prev_status;
+                }
+                
+                //if ( (status & 0xF0) == 0x80) {
+                //    std::cout << "An OFF note\n";
+                //    char c;
+                //    std::cin >> c;
+                //}
                 uint8_t opcode = status & 0xF0;
 
                 switch (opcode) {
 
-                case EventType::VoiceNoteOff:     
-                    channel = ((status & 0x0F00) >> 8);
+                case EventType::NoteOff:     
+                    prev_status = status;
+                    channel = status & 0x0F; // channel 0-16, lowest 4 bits
+                    note = file.get();
+                    velocity = file.get(); // not used for anything but part of standard event
+                    tracks[trk].events.push_back({ MidiEvent::EventType::NoteOff, delta_time, note, velocity, channel });
+                    break;
+
+                case EventType::NoteOn:
+                    prev_status = status;
+                    channel = status & 0x0F; // channel 0-16, lowest 4 bits
                     note = file.get();
                     velocity = file.get();
+                    if ( velocity > 0 )
+                        tracks[trk].events.push_back({ MidiEvent::EventType::NoteOn, delta_time, note, velocity, channel });
+                    else
+                        tracks[trk].events.push_back({ MidiEvent::EventType::NoteOff, delta_time, note, velocity, channel });
+                    
                     break;
 
-                case EventType::VoiceNoteOn:
+                case EventType::ControlChange:
+                    prev_status = status;
+                    file.seekg(2, std::ios::cur); // we don't care     
+                    tracks[trk].events.push_back({ MidiEvent::EventType::Other, delta_time, 0, 0, 0 });
                     break;
 
-                case EventType::VoiceProgramChange:
+                case EventType::ProgramChange:
+                    prev_status = status;
+                    // channel = status & 0x0F;
+                    // program = file.get();
+                    file.get(); // we don't save
+                    tracks[trk].events.push_back({ MidiEvent::EventType::Other, delta_time, 0, 0, 0 });
                     break;
 
-                case EventType::VoicePitchBend:
+                case EventType::PitchBend:
+                    prev_status = status;
+                    // channel = status & 0x0F;
+                    // amount = next two bytes
+                    file.seekg(2, std::ios::cur); // skip two
+                    tracks[trk].events.push_back({ MidiEvent::EventType::Other, delta_time, 0, 0, 0 });
                     break;
 
-                case EventType::VoiceAfterTouch:
+                case EventType::AfterTouch:
+                    prev_status = status;
+                    // channel = status & 0x0F;
+                    // note/key = file.get();
+                    // amount = file.get();
+                    tracks[trk].events.push_back({ MidiEvent::EventType::Other, delta_time, 0, 0, 0 });
+                    file.seekg(2, std::ios::cur); // skip two
                     break;
 
-                case EventType::VoiceChannelPressure:
+                case EventType::ChannelPressure:
+                    prev_status = status;
+                    // channel = status & 0x0F;
+                    // amount = file.get();
+                    file.get(); // we don't care
+                    tracks[trk].events.push_back({ MidiEvent::EventType::Other, delta_time, 0, 0, 0 });
                     break;
 
-                case EventType::SystemExclusive:
+                case EventType::SysExAndMeta: // Really system exclusive and metadata...
+                    prev_status = 0;
+                    tracks[trk].events.push_back({ MidiEvent::EventType::Other, delta_time, 0, 0, 0 });
+
+                    if (status == 0xF7 || status == 0xF0) { // System exclusive type 1 (not escaped)
+                        prev_status = 0;
+                        uint32_t length = read_multi_bytes();
+                        file.seekg(length, std::ios::cur); // skip                        ´
+                    }
+                    else   // Meta event 
+                    { 
+                        uint8_t  type = file.get();
+                        switch (type) {
+                        case 0x00: // Sequence number FF 00 ss ss
+                            file.seekg(2, std::ios::cur); // skip  two                       ´
+                            break;
+                        case 0x01: // text: FF 01 multibytelength <string>
+                            length = read_multi_bytes();
+                            std::cout << "TEXT: " << midi_string(length) << '\n'; // we don't save                            
+                            break;
+                        case 0x02: // copyright: FF 02 multibytelength <string>
+                            length = read_multi_bytes();                            
+                            std::cout << "COPYRIGHT: " << midi_string(length) <<  '\n';
+                            break;
+                        case 0x03: // FF 03 length text Track or sequence name. 
+                            length = read_multi_bytes();
+                            tmp_string = midi_string(length);
+                            std::cout << "TRACK NAME: " << tmp_string << '\n';
+                            tracks[trk].name = tmp_string;
+                            break;
+                        case 0x04: // Instrument name
+                            length = read_multi_bytes();
+                            tmp_string = midi_string(length);
+                            std::cout << "INSTRUMENT NAME: " << tmp_string << '\n';
+                            tracks[trk].instrument = tmp_string;
+                            break;
+                        case 0x05: // Lyric
+                            length = read_multi_bytes();
+                            tmp_string = midi_string(length);
+                            std::cout << "Lyric event: " << tmp_string << '\n'; // Don't keep                            
+                            break;
+                        case 0x06: // Marker
+                            length = read_multi_bytes();
+                            tmp_string = midi_string(length);
+                            std::cout << "Marker found: " << tmp_string << '\n';
+                            break;                            
+                        case 0x07: // Cue point
+                            length = read_multi_bytes();
+                            tmp_string = midi_string(length);
+                            std::cout << "CUE POINT: " << tmp_string << '\n';                            
+                            break;
+                        case 0x08: // Program name
+                            length = read_multi_bytes();
+                            tmp_string = midi_string(length);
+                            std::cout << "PROGRAM NAME: " << tmp_string << '\n';
+                            break;
+                        case 0x09: // Device name
+                            length = read_multi_bytes();
+                            tmp_string = midi_string(length);
+                            std::cout << "DEVICE NAME: " << tmp_string << '\n';
+                            break;
+                        case 0x20: // FF 20 01 cc Midi Channel Prefix                            
+                            file.seekg(2, std::ios::cur); // skip  two    
+                            break;
+                        case 0x21: // FF 21 01 pp Midi Port
+                            file.get(); // Read the 01
+                            tracks[trk].port = file.get();
+                            break;
+                        case 0x2F: // FF 2F 00 End of track                            
+                            file.get(); // should be 00                            
+                            end_of_track = true;
+                            break;
+                        case 0x51: // FF 51 03 tt tt tt tempo
+                            file.seekg(4, std::ios::cur); // skip  five                            
+                            break;
+                        case 0x54: // FF 54 05 hr mn se fr ff - SMPTE offset
+                            file.seekg(6, std::ios::cur); // skip  payload                            
+                            break;
+                        case 0x58: // FF 58 04 nn dd cc bb - Time signature
+                            file.seekg(5, std::ios::cur); // skip  payload                            
+                            break;
+                        case 0x59: // FF 59 02 sf mi - Key signature
+                            file.seekg(3, std::ios::cur); // skip  payload                            
+                            break;
+                        case 0x7F: // FF 7F length data - Sequencer specific
+                            length = read_multi_bytes();
+                            file.seekg(length, std::ios::cur); // skip  payload                         
+                            break;
+                        default:
+                            std::cout << "Should not be here :|\n";
+                        } // end switch case META
+                        
+                    } // if some kind of sysex or meta
                     break;
+                default:
+                    std::cout << "Should not be here\n";
+                } // case status messages
+            } // end loop track events            
+            std::cout << '\n';
+        } // loop through tracks     
 
-                case 0xFF: // End of track
-                    end_of_track = true;
 
+        // And convert the events to notes with duration
+        // Creating Notes list
+        for (auto& t : tracks) {
+
+            uint32_t running_time = 0;
+
+            auto& events = t.events;
+            auto& notes = t.notes;
+            std::map<uint8_t, MidiEvent> being_processed;
+
+            for (auto e : events) {
+
+                running_time += e.delta_time;
+
+                if (e.event == MidiEvent::EventType::NoteOn) 
+                {
+                    e.delta_time = running_time; // it's a copy of the event so we use it as a scratch variable
+                    being_processed.insert({ e.note, e });                    
                 }
-            } // end loop through track events
-            
-
-        } // loop through tracks
-        
-
-
+                else if (e.event == MidiEvent::EventType::NoteOff) {               
+                    auto result = being_processed.find(e.note);
+                    if (result != being_processed.end()) {
+                        auto on_event = result->second;
+                        notes.push_back({ on_event.note, on_event.velocity, on_event.delta_time, running_time - on_event.delta_time });
+                        being_processed.erase(e.note);
+                    }                    
+                }
+            }           
+        }
     }
+
+    std::vector<MidiTrack> getTracksData() { return tracks;  }
 
 private:
     uint32_t                file_id = 0;    
@@ -212,11 +420,61 @@ int main()
     uint16_t fps = ((~((tmp16 & 0xEF00)>>8)) + 1) & 0x00FF;*/
 
     std::ifstream midistream("organ.mid", std::ios::binary);                
+    std::vector<MidiTrack> tracks;
 
     if (midistream.is_open()) {
         MidiFile midi(midistream);
+        tracks = midi.getTracksData();
         midistream.close();
     }
 
+    // for the fun of it... sort all event vectors into one single vector
+    // Thinking that would have to be the view for a sequencer
+    // I would loose data without the track info. But for now lets try
+
+    uint32_t total_num_events = 0;    
+    // Get size needed for all events merged. 
+    for (uint32_t i = 0; i < tracks.size();  ++i) 
+        total_num_events += tracks[i].notes.size();        
+
+    std::vector<MidiNote> all_tracks_merged;
+    all_tracks_merged.reserve(total_num_events);
+
+    // We prepare the sort... keeping one vector with curent index of each track
+    std::vector<size_t> current_pos(tracks.size(), { 0 });  // index of where we are in each vector  
+
+    for (size_t tr_idx = 0; tr_idx < tracks.size(); ++tr_idx) {
+
+        while (current_pos[tr_idx] < tracks[tr_idx].notes.size()) {
+
+            size_t winner_track = tr_idx; // we cross fingers for main track
+            auto min_val = tracks[tr_idx].notes[current_pos[tr_idx]].start_time;
+
+            for (size_t sub_tx = tr_idx + 1; sub_tx < tracks.size(); ++sub_tx)
+            {
+                if (current_pos[sub_tx] < tracks[sub_tx].notes.size()) {
+                    auto contester = tracks[sub_tx].notes[current_pos[sub_tx]].start_time;
+                    if (min_val > contester) {
+                        min_val = contester;
+                        winner_track = sub_tx;
+                    }
+                }
+            }
+            all_tracks_merged.push_back(tracks[winner_track].notes[current_pos[winner_track]]);
+            current_pos[winner_track]++;         
+        }      
+    }
+
+    size_t counter = 0;
+    for (auto& e : all_tracks_merged)
+    {
+        std::cout << e.start_time << "\t note: " << e.note << "\tDuration: " << e.duration << '\n';
+        if (++counter == 300)
+            break;
+    }
+
+    std::cout << "Done\n";
+
+    
     return 0;
 }
