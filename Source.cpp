@@ -1,5 +1,5 @@
 #include "MidiFile.hpp"
-
+#include "WinMidiPlayer.hpp"
 #include <fstream>
 #include <ios>
 
@@ -11,7 +11,10 @@ int main() {
         MidiFile midi(midistream);
         // will pull all the notes-tracks and sort into a single
         // vector sorted by start_time and print out the xxx first sorted elements
-        midi_test_read(midi, 300); 
+        //midi_test_read(midi, 300); 
+
+        WinMidiPlayer player(midi);
+        player.Play(); // no point in pause() rewind if in single thread
     }
 	
 	return 0;

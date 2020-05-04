@@ -1,3 +1,6 @@
+#ifndef  MIDIFILE_HPP_
+#define MIDIFILE_HPP_
+
 
 // Good info on the midi file standard http://www.somascape.org/midi/tech/mfile.html
 //
@@ -78,3 +81,4 @@ private:
 
 void midi_test_read(const MidiFile&, size_t num_sorted_to_print);
 
+#endif // ! MIDIFILE_HPP_
