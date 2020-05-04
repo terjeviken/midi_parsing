@@ -1,6 +1,7 @@
 
 // Good info on the midi file standard http://www.somascape.org/midi/tech/mfile.html
-// This project is just a academic task to freshen up C++ and the brain after watching
+//
+// This project is just an academic exercise to freshen up C++ and the brain after watching
 // javidx9's video on youtube https://www.youtube.com/watch?v=040BKtnDdg0
 // I saw that I had to refresh my bit manipulation skills a bit and found that trying to recreate
 // the project (and using javdx9's video/solution as a crutch on the way) would be a good exercise.
@@ -67,7 +68,7 @@ class MidiFile {
     };
 
 public:
-    MidiFile(){}
+
     MidiFile(std::ifstream& file) { ParseFile(file); }
    
     void ParseFile(std::ifstream& file) {
@@ -84,6 +85,10 @@ public:
                 s += file.get();
             return s;
         };
+        // Some numbers like length of text and sysex will need anything from 1-4 bytes to
+        // be exåressed. Only 7 bits of each byte is used to form a 7, 14, 21 or 28 bit number.
+        // read_multi_bytes does the bit shifting.
+        // DO NOT swap numbers after reading multi byte numbers...
         auto read_multi_bytes = [&file]() { // should probably throw if prematue eof()
             uint32_t result;
             uint8_t bt;
@@ -115,7 +120,7 @@ public:
         //    }
         //}
 
-        // read in the midi file
+        // read in the midi file - a few scratch variables
         uint32_t tmp32;
         uint16_t tmp16; 
 
@@ -177,7 +182,7 @@ public:
 
             while (!file.eof() && !end_of_track) 
             {
-                // read deltatimes 2 bytes, and status 8 bytes 
+                // read deltatimes 2 bytes, and then status (type of operation)
                 uint32_t    delta_time = 0;
                 uint8_t     status = 0;
                 uint8_t     note = 0;
@@ -187,7 +192,7 @@ public:
                 uint32_t    length = 0;
                 std::string tmp_string;
 
-                delta_time = read_multi_bytes();
+                delta_time = read_multi_bytes(); // DO NOT SWAP
                 status = file.get();
 
                 // check if running state and restore previous status if so
@@ -197,16 +202,11 @@ public:
                     status = prev_status;
                 }
                 
-                //if ( (status & 0xF0) == 0x80) {
-                //    std::cout << "An OFF note\n";
-                //    char c;
-                //    std::cin >> c;
-                //}
                 uint8_t opcode = status & 0xF0;
 
                 switch (opcode) {
 
-                case EventType::NoteOff:     
+                case EventType::NoteOff:  // Most implementation uses NoteOn with velocity==0 a NoteOff   
                     prev_status = status;
                     channel = status & 0x0F; // channel 0-16, lowest 4 bits
                     note = file.get();
@@ -221,7 +221,7 @@ public:
                     velocity = file.get();
                     if ( velocity > 0 )
                         tracks[trk].events.push_back({ MidiEvent::EventType::NoteOn, delta_time, note, velocity, channel });
-                    else
+                    else // running state it's a NoteOff event.
                         tracks[trk].events.push_back({ MidiEvent::EventType::NoteOff, delta_time, note, velocity, channel });
                     
                     break;
@@ -267,6 +267,8 @@ public:
 
                 case EventType::SysExAndMeta: // Really system exclusive and metadata...
                     prev_status = 0;
+                    // You need to add these events as well - or accumulate the none Note-Off/On deltatimes
+                    // to adjust note on/off times for correct note-spacing. I choose to add.
                     tracks[trk].events.push_back({ MidiEvent::EventType::Other, delta_time, 0, 0, 0 });
 
                     if (status == 0xF7 || status == 0xF0) { // System exclusive type 1 (not escaped)
@@ -283,16 +285,16 @@ public:
                             break;
                         case 0x01: // text: FF 01 multibytelength <string>
                             length = read_multi_bytes();
-                            std::cout << "TEXT: " << midi_string(length) << '\n'; // we don't save                            
+                            tmp_string = midi_string(length);                            
                             break;
                         case 0x02: // copyright: FF 02 multibytelength <string>
-                            length = read_multi_bytes();                            
+                            length = read_multi_bytes();
                             std::cout << "COPYRIGHT: " << midi_string(length) <<  '\n';
                             break;
                         case 0x03: // FF 03 length text Track or sequence name. 
                             length = read_multi_bytes();
                             tmp_string = midi_string(length);
-                            std::cout << "TRACK NAME: " << tmp_string << '\n';
+                            //std::cout << "TRACK NAME: " << tmp_string << '\n';
                             tracks[trk].name = tmp_string;
                             break;
                         case 0x04: // Instrument name
@@ -304,27 +306,27 @@ public:
                         case 0x05: // Lyric
                             length = read_multi_bytes();
                             tmp_string = midi_string(length);
-                            std::cout << "Lyric event: " << tmp_string << '\n'; // Don't keep                            
+                            //std::cout << "Lyric event: " << tmp_string << '\n'; // Don't keep                            
                             break;
                         case 0x06: // Marker
                             length = read_multi_bytes();
                             tmp_string = midi_string(length);
-                            std::cout << "Marker found: " << tmp_string << '\n';
+                            //std::cout << "Marker found: " << tmp_string << '\n';
                             break;                            
                         case 0x07: // Cue point
                             length = read_multi_bytes();
                             tmp_string = midi_string(length);
-                            std::cout << "CUE POINT: " << tmp_string << '\n';                            
+                            //std::cout << "CUE POINT: " << tmp_string << '\n';                            
                             break;
                         case 0x08: // Program name
                             length = read_multi_bytes();
                             tmp_string = midi_string(length);
-                            std::cout << "PROGRAM NAME: " << tmp_string << '\n';
+                            //std::cout << "PROGRAM NAME: " << tmp_string << '\n';
                             break;
                         case 0x09: // Device name
                             length = read_multi_bytes();
                             tmp_string = midi_string(length);
-                            std::cout << "DEVICE NAME: " << tmp_string << '\n';
+                            //std::cout << "DEVICE NAME: " << tmp_string << '\n';
                             break;
                         case 0x20: // FF 20 01 cc Midi Channel Prefix                            
                             file.seekg(2, std::ios::cur); // skip  two    
@@ -354,13 +356,13 @@ public:
                             file.seekg(length, std::ios::cur); // skip  payload                         
                             break;
                         default:
-                            std::cout << "Should not be here :|\n";
+                            std::cerr << "ERR: We really should not be here :|\n";
                         } // end switch case META
                         
                     } // if some kind of sysex or meta
                     break;
                 default:
-                    std::cout << "Should not be here\n";
+                    std::cerr << "ERR: Nope - Should not be here\n";
                 } // case status messages
             } // end loop track events            
             std::cout << '\n';
