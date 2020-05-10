@@ -7,13 +7,34 @@
 // the project (and using javdx9's video/solution as a crutch on the way) would be a good exercise.
 // 
 // After the parsing - I wish to look into how to control real time marshalling of the note-data.
-// as a very simple playback sequencer. Probably not to a midi device but a time logged file or something.
+// as a very simple playback sequencer. I will let that be a separate project.
 
 #include "MidiFile.hpp"
 #include <iostream>
 #include <map>
 #include <iomanip>
 #include <ios>
+
+
+
+int main() {
+
+    std::ifstream midistream("organ.mid", std::ios::binary);
+
+    if (midistream.is_open()) {
+
+        // Midi file will parse out all note-on and note-off events for each track
+        // It will also create a "view" for each track with note_on, and duration
+        // meant for visualization (not implemented - see Javidx9's video)
+        MidiFile midi(midistream);
+
+        // Then we do a little test. This function  also "MidiFile.hpp"
+        // will merge all tracks into a single vector - sorted all merged 
+        // events by event start time
+        midi_test_read(midi, 300);
+    }
+}
+
 
 
 void debug_print_hex(uint32_t val) {

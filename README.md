@@ -6,7 +6,9 @@ I watched Javidx9's youtube video on parsing a midi file. Being a former hobby m
 javidx9's video on youtube https://www.youtube.com/watch?v=040BKtnDdg0
 Good info on the midi file standard http://www.somascape.org/midi/tech/mfile.html
 
-The midi file parsing is covered by MidiFile.hpp and MidiFile.cpp.
+The midi file parsing is covered by MidiFile.hpp and MidiFile.cpp. int main() is inside MidiFile.cpp
 
 The next thing I would like to test (after reading in all tracks) is to simulate a simple sequencer. Maybe run it in a loop and dispatching the events in realtime. - For now it will just be writing each event timely to a file or std::cout, not midi-device - and based on the system clock.
+That will happen in another project. It is now completed enough that i can keep using it if i chose to elaborate on synthezeisers and Midi-player stuff.
+
 

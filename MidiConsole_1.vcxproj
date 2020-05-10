@@ -146,8 +146,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
   </ItemDefinitionGroup>
-  <ItemGroup>
-    <ClCompile Include="Source.cpp" />
+  <ItemGroup>    
     <ClCompile Include="MidiFile.cpp" />
   </ItemGroup>
   <ItemGroup>
